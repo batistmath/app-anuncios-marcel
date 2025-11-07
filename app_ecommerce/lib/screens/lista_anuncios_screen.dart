@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart'; 
-import 'package:uuid/uuid.dart';
+import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'dart:io';
+
 import '../models/anuncio.dart';
 import 'form_anuncio_screen.dart';
+import '../helpers/db_helper.dart';
 
 class ListaAnunciosScreen extends StatefulWidget {
   const ListaAnunciosScreen({super.key});
@@ -12,94 +15,129 @@ class ListaAnunciosScreen extends StatefulWidget {
 }
 
 class _ListaAnunciosScreenState extends State<ListaAnunciosScreen> {
-  final List<Anuncio> _anuncios = [
-    Anuncio(
-      id: const Uuid().v4(),
-      titulo: 'iPhone 13',
-      descricao: 'iPhone 13 128GB Grafite, em excelente estado, com caixa e acessórios.',
-      preco: 4500.00,
-      imageUrl: 'https://m.media-amazon.com/images/I/41Zbbl4P+LL._AC_SX679_.jpg',
-    ),
-    Anuncio(
-      id: const Uuid().v4(),
-      titulo: 'Notebook Dell Inspiron',
-      descricao: 'Notebook Dell Inspiron 15 3000, Intel Core i5, 8GB RAM, 256GB SSD, Tela 15.6" Full HD',
-      preco: 2800.00,
-      imageUrl: 'https://i.dell.com/is/image/DellContent/content/dam/ss2/product-images/dell-client-products/notebooks/inspiron-notebooks/15-3530-intel/media-gallery/black/notebook-inspiron-15-3530-nt-plastic-black-gallery-2.psd?fmt=png-alpha&pscan=auto&scl=1&hei=402&wid=606&qlt=100,1&resMode=sharp2&size=606,402&chrss=full',
-    ),
-  ];
+  late Future<List<Anuncio>> _anunciosFuture;
 
   final _currencyFormat = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
-  void _navegarParaFormularioAdicionar() async {
-    final novoAnuncio = await Navigator.of(context).push<Anuncio>(
-      MaterialPageRoute(
-        builder: (ctx) => const FormAnuncioScreen(),
-      ),
-    );
-
-    if (novoAnuncio != null) {
-      setState(() {
-        _anuncios.add(novoAnuncio);
-      });
-      _mostrarSnackBar('Anúncio adicionado com sucesso!');
-    }
+  @override
+  void initState() {
+    super.initState();
+    _refreshAnuncios();
   }
 
-  void _navegarParaFormularioEditar(Anuncio anuncio) async {
-    final anuncioEditado = await Navigator.of(context).push<Anuncio>(
-      MaterialPageRoute(
+  void _refreshAnuncios() {
+    setState(() {
+      _anunciosFuture = DBHelper.getAll();
+    });
+  }
 
+  void _navegarParaFormulario([Anuncio? anuncio]) async {
+    final bool? foiSalvo = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
         builder: (ctx) => FormAnuncioScreen(anuncio: anuncio),
       ),
     );
 
-    if (anuncioEditado != null) {
-      setState(() {
-        final index = _anuncios.indexWhere((a) => a.id == anuncioEditado.id);
-        if (index != -1) {
-          _anuncios[index] = anuncioEditado;
-        }
-      });
-      _mostrarSnackBar('Anúncio editado com sucesso!');
+    if (foiSalvo == true) {
+      _refreshAnuncios();
     }
   }
 
-  void _removerAnuncio(String id) {
-    Anuncio? anuncioRemovido;
-    int? indexAnuncio;
+  void _removerAnuncio(Anuncio anuncioRemovido) async {
+    await DBHelper.delete(anuncioRemovido.id);
+    _refreshAnuncios();
 
-    setState(() {
-      indexAnuncio = _anuncios.indexWhere((a) => a.id == id);
-      if(indexAnuncio != null && indexAnuncio! >= 0) {
-        anuncioRemovido = _anuncios.removeAt(indexAnuncio!);
-      }
-    });
-
-    if(anuncioRemovido != null && indexAnuncio != null) {
-      ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Anúncio removido!'),
-          duration: const Duration(seconds: 3),
-          action: SnackBarAction(
-            label: 'DESFAZER',
-            onPressed: () {
-              setState(() {
-                if(anuncioRemovido != null && indexAnuncio != null) {
-                   _anuncios.insert(indexAnuncio!, anuncioRemovido!);
-                }
-              });
-            },
-          ),
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Text('Anúncio removido!'),
+        duration: const Duration(seconds: 3),
+        action: SnackBarAction(
+          label: 'DESFAZER',
+          onPressed: () async {
+            await DBHelper.insert(anuncioRemovido);
+            _refreshAnuncios();
+          },
         ),
-      );
+      ),
+    );
+  }
+
+  void _mostrarOpcoesShare(Anuncio anuncio) {
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: Wrap(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.message),
+                title: const Text('WhatsApp'),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _sharePorWhatsApp(anuncio);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.sms),
+                title: const Text('SMS'),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _sharePorSMS(anuncio);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.email),
+                title: const Text('E-mail'),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _sharePorEmail(anuncio);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  String _buildShareText(Anuncio anuncio) {
+    return 'Olha esse anúncio no Mercado Livre: ${anuncio.titulo} por ${_currencyFormat.format(anuncio.preco)}. ${anuncio.descricao}';
+  }
+
+  Future<void> _launchUri(Uri uri, String appName) async {
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } else {
+      _mostrarSnackBar('Não foi possível abrir o $appName.');
     }
+  }
+
+  void _sharePorWhatsApp(Anuncio anuncio) {
+    final text = _buildShareText(anuncio);
+    final uri = Uri.parse('whatsapp://send?text=${Uri.encodeComponent(text)}');
+    _launchUri(uri, 'WhatsApp');
+  }
+
+  void _sharePorSMS(Anuncio anuncio) {
+    final text = _buildShareText(anuncio);
+    final uri = Uri.parse('sms:?body=${Uri.encodeComponent(text)}');
+    _launchUri(uri, 'app de SMS');
+  }
+
+  void _sharePorEmail(Anuncio anuncio) {
+    final text = _buildShareText(anuncio);
+    final subject = 'Confira este anúncio: ${anuncio.titulo}';
+    final uri = Uri.parse(
+        'mailto:?subject=${Uri.encodeComponent(subject)}&body=${Uri.encodeComponent(text)}');
+    _launchUri(uri, 'app de E-mail');
   }
 
   void _mostrarSnackBar(String mensagem) {
-     ScaffoldMessenger.of(context).clearSnackBars();
-     ScaffoldMessenger.of(context).showSnackBar(
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(mensagem),
         duration: const Duration(seconds: 2),
@@ -111,25 +149,29 @@ class _ListaAnunciosScreenState extends State<ListaAnunciosScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'Mercado Livre',
-          style: TextStyle(
-            color: Colors.black87,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
+        title: const Text('Mercado Livre'),
         backgroundColor: const Color(0xFFFFE600),
-        elevation: 1.0,
-        iconTheme: const IconThemeData(color: Colors.black87),
         actions: [
           IconButton(
             icon: const Icon(Icons.add),
-            onPressed: _navegarParaFormularioAdicionar,
+            onPressed: () => _navegarParaFormulario(null),
           ),
         ],
       ),
-      body: _anuncios.isEmpty
-          ? const Center(
+      body: FutureBuilder<List<Anuncio>>(
+        future: _anunciosFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          if (snapshot.hasError) {
+            return Center(
+                child: Text('Erro ao carregar anúncios: ${snapshot.error}'));
+          }
+
+          if (!snapshot.hasData || snapshot.data!.isEmpty) {
+            return const Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -141,43 +183,27 @@ class _ListaAnunciosScreenState extends State<ListaAnunciosScreen> {
                   ),
                 ],
               ),
-            )
-          : ListView.builder(
-              itemCount: _anuncios.length,
-              itemBuilder: (ctx, index) {
-                final anuncio = _anuncios[index];
-                return Dismissible(
-                  key: Key(anuncio.id),
-                  direction: DismissDirection.endToStart,
-                  onDismissed: (direction) {
-                    _removerAnuncio(anuncio.id);
-                  },
-                  background: Container(
-                    color: Colors.red,
-                    alignment: Alignment.centerRight,
-                    padding: const EdgeInsets.only(right: 20.0),
-                    child: const Icon(
-                      Icons.delete,
-                      color: Colors.white,
-                    ),
-                  ),
-                  child: _buildAnuncioItem(anuncio),
-                );
-              },
-            ),
+            );
+          }
+
+          final anuncios = snapshot.data!;
+          return ListView.builder(
+            itemCount: anuncios.length,
+            itemBuilder: (ctx, index) {
+              final anuncio = anuncios[index];
+              return _buildAnuncioItem(anuncio);
+            },
+          );
+        },
+      ),
     );
   }
 
-
   Widget _buildAnuncioItem(Anuncio anuncio) {
     return InkWell(
-      onTap: () => _navegarParaFormularioEditar(anuncio),
+      onTap: () => _navegarParaFormulario(anuncio),
       child: Card(
         margin: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
-        elevation: 1.0,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8.0)
-        ),
         child: Padding(
           padding: const EdgeInsets.all(12.0),
           child: Row(
@@ -185,8 +211,8 @@ class _ListaAnunciosScreenState extends State<ListaAnunciosScreen> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(8.0),
-                child: Image.network(
-                  anuncio.imageUrl,
+                child: Image.file(
+                  File(anuncio.imagePath),
                   width: 120,
                   height: 120,
                   fit: BoxFit.cover,
@@ -195,7 +221,7 @@ class _ListaAnunciosScreenState extends State<ListaAnunciosScreen> {
                       width: 120,
                       height: 120,
                       color: Colors.grey[200],
-                      child: const Icon(Icons.image_not_supported, color: Colors.grey),
+                      child: const Icon(Icons.broken_image, color: Colors.grey),
                     );
                   },
                 ),
@@ -207,24 +233,18 @@ class _ListaAnunciosScreenState extends State<ListaAnunciosScreen> {
                   children: [
                     Text(
                       anuncio.descricao,
-                      style: const TextStyle(
-                        fontSize: 16.0,
-                        color: Colors.black87,
-                      ),
+                      style: const TextStyle(fontSize: 16.0),
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 8),
-                    // Preço
                     Text(
                       _currencyFormat.format(anuncio.preco),
                       style: const TextStyle(
                         fontSize: 22.0,
                         fontWeight: FontWeight.bold,
-                        color: Colors.black,
                       ),
                     ),
-                    const SizedBox(height: 4),
                     Text(
                       'Frete grátis',
                       style: TextStyle(
@@ -236,6 +256,23 @@ class _ListaAnunciosScreenState extends State<ListaAnunciosScreen> {
                   ],
                 ),
               ),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: Icon(Icons.share, color: Colors.blue[600]),
+                    onPressed: () {
+                      _mostrarOpcoesShare(anuncio);
+                    },
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.delete, color: Colors.red[700]),
+                    onPressed: () {
+                      _removerAnuncio(anuncio);
+                    },
+                  ),
+                ],
+              )
             ],
           ),
         ),

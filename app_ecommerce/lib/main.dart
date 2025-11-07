@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'screens/lista_anuncios_screen.dart';
+import 'helpers/db_helper.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initializeDateFormatting('pt_BR', null);
-  
+  await DBHelper.database;
   runApp(const MyApp());
 }
 
@@ -18,9 +19,9 @@ class MyApp extends StatelessWidget {
       primaryColor: const Color(0xFFFFE600),
       scaffoldBackgroundColor: const Color(0xFFF5F5F5),
       colorScheme: ColorScheme.fromSwatch().copyWith(
-        primary: const Color(0xFFFFE600), 
+        primary: const Color(0xFFFFE600),
         secondary: const Color(0xFF3483FA),
-        surface: const Color(0xFFF5F5F5),
+        background: const Color(0xFFF5F5F5),
       ),
       appBarTheme: const AppBarTheme(
         elevation: 1.0,
@@ -46,6 +47,7 @@ class MyApp extends StatelessWidget {
           borderRadius: BorderRadius.circular(8.0),
           borderSide: const BorderSide(
             color: Color(0xFF3483FA),
+            width: 2.0,
           ),
         ),
       ),

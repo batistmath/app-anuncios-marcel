@@ -1,7 +1,10 @@
-
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
+import 'package:image_picker/image_picker.dart';
+import 'dart:io';
+
 import '../models/anuncio.dart';
+import '../helpers/db_helper.dart';
 
 class FormAnuncioScreen extends StatefulWidget {
   final Anuncio? anuncio;
@@ -19,19 +22,27 @@ class _FormAnuncioScreenState extends State<FormAnuncioScreen> {
   late TextEditingController _tituloController;
   late TextEditingController _descricaoController;
   late TextEditingController _precoController;
-  late TextEditingController _imageUrlController;
+
+  String? _imagePath;
 
   bool _isEditing = false;
+  final ImagePicker _picker = ImagePicker();
 
   @override
   void initState() {
     super.initState();
     _isEditing = widget.anuncio != null;
 
-    _tituloController = TextEditingController(text: _isEditing ? widget.anuncio!.titulo : '');
-    _descricaoController = TextEditingController(text: _isEditing ? widget.anuncio!.descricao : '');
-    _precoController = TextEditingController(text: _isEditing ? widget.anuncio!.preco.toStringAsFixed(2) : '');
-    _imageUrlController = TextEditingController(text: _isEditing ? widget.anuncio!.imageUrl : '');
+    _tituloController =
+        TextEditingController(text: _isEditing ? widget.anuncio!.titulo : '');
+    _descricaoController = TextEditingController(
+        text: _isEditing ? widget.anuncio!.descricao : '');
+    _precoController = TextEditingController(
+        text: _isEditing ? widget.anuncio!.preco.toStringAsFixed(2) : '');
+
+    if (_isEditing) {
+      _imagePath = widget.anuncio!.imagePath;
+    }
   }
 
   @override
@@ -39,28 +50,80 @@ class _FormAnuncioScreenState extends State<FormAnuncioScreen> {
     _tituloController.dispose();
     _descricaoController.dispose();
     _precoController.dispose();
-    _imageUrlController.dispose();
     super.dispose();
   }
 
-  void _salvarFormulario() {
-    if (_formKey.currentState!.validate()) {
-      final titulo = _tituloController.text;
-      final descricao = _descricaoController.text;
-      final preco = double.tryParse(_precoController.text.replaceAll(',', '.')) ?? 0.0;
-      final imageUrl = _imageUrlController.text.isNotEmpty 
-          ? _imageUrlController.text 
-          : 'https://placehold.co/120x120/eee/333?text=Sem+Foto';
-
-      final anuncioSalvo = Anuncio(
-        id: _isEditing ? widget.anuncio!.id : _uuid.v4(),
-        titulo: titulo,
-        descricao: descricao,
-        preco: preco,
-        imageUrl: imageUrl,
+  Future<void> _pickImage() async {
+    try {
+      final XFile? pickedFile = await _picker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 800,
+        imageQuality: 70,
       );
 
-      Navigator.of(context).pop(anuncioSalvo);
+      if (pickedFile != null) {
+        setState(() {
+          _imagePath = pickedFile.path;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao selecionar imagem: $e')),
+      );
+    }
+  }
+
+  void _salvarFormulario() async {
+    if (!mounted) return;
+
+    final isValid = _formKey.currentState!.validate();
+    final hasImage = _imagePath != null;
+
+    if (!isValid) {
+      return;
+    }
+
+    if (!hasImage) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Por favor, selecione uma imagem para o anúncio.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final titulo = _tituloController.text;
+    final descricao = _descricaoController.text;
+    final preco =
+        double.tryParse(_precoController.text.replaceAll(',', '.')) ?? 0.0;
+
+    final anuncioSalvo = Anuncio(
+      id: _isEditing ? widget.anuncio!.id : _uuid.v4(),
+      titulo: titulo,
+      descricao: descricao,
+      preco: preco,
+      imagePath: _imagePath!,
+    );
+
+    try {
+      if (_isEditing) {
+        await DBHelper.update(anuncioSalvo);
+      } else {
+        await DBHelper.insert(anuncioSalvo);
+      }
+
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Erro ao salvar o anúncio: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
@@ -88,16 +151,8 @@ class _FormAnuncioScreenState extends State<FormAnuncioScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          _isEditing ? 'Editar Anúncio' : 'Adicionar Anúncio',
-           style: const TextStyle(
-            color: Colors.black87,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
+        title: Text(_isEditing ? 'Editar Anúncio' : 'Adicionar Anúncio'),
         backgroundColor: const Color(0xFFFFE600),
-        elevation: 1.0,
-        iconTheme: const IconThemeData(color: Colors.black87),
         actions: [
           IconButton(
             icon: const Icon(Icons.save),
@@ -111,6 +166,39 @@ class _FormAnuncioScreenState extends State<FormAnuncioScreen> {
           key: _formKey,
           child: ListView(
             children: [
+              Center(
+                child: Column(
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      height: 200,
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey),
+                        borderRadius: BorderRadius.circular(8.0),
+                      ),
+                      alignment: Alignment.center,
+                      child: _imagePath == null
+                          ? const Text('Nenhuma imagem selecionada.',
+                              style: TextStyle(color: Colors.grey))
+                          : ClipRRect(
+                              borderRadius: BorderRadius.circular(8.0),
+                              child: Image.file(
+                                File(_imagePath!),
+                                width: double.infinity,
+                                height: 200,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                    ),
+                    TextButton.icon(
+                      icon: const Icon(Icons.image),
+                      label: const Text('Selecionar Imagem da Galeria'),
+                      onPressed: _pickImage,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
               TextFormField(
                 controller: _tituloController,
                 decoration: const InputDecoration(
@@ -139,42 +227,26 @@ class _FormAnuncioScreenState extends State<FormAnuncioScreen> {
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.attach_money),
                 ),
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
                 validator: _validarPreco,
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _imageUrlController,
-                decoration: const InputDecoration(
-                  labelText: 'URL da Imagem (Opcional)',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.image),
-                ),
-                keyboardType: TextInputType.url,
-                validator: (value) {
-                  if (value != null && value.isNotEmpty && !value.startsWith('http')) {
-                    return 'Insira uma URL válida (http://...)';
-                  }
-                  return null;
-                },
               ),
               const SizedBox(height: 32),
               ElevatedButton(
                 onPressed: _salvarFormulario,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF3483FA),
-                  padding: const EdgeInsets.symmetric(vertical: 16.0),
-                  textStyle: const TextStyle(fontSize: 18),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8.0)
-                  )
-                ),
-                child: Text(_isEditing ? 'Salvar Alterações' : 'Cadastrar Anúncio', style: const TextStyle(color: Colors.white),),
+                    backgroundColor: const Color(0xFF3483FA),
+                    padding: const EdgeInsets.symmetric(vertical: 16.0),
+                    textStyle: const TextStyle(fontSize: 18),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8.0))),
+                child: Text(
+                    _isEditing ? 'Salvar Alterações' : 'Cadastrar Anúncio',
+                    style: const TextStyle(color: Colors.white)),
               ),
             ],
           ),
         ),
       ),
     );
-  }
-}
+  }}
